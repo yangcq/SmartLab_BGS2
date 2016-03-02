@@ -2,20 +2,20 @@
 {
     public class InternetError
     {
-        public int ProfileID;
-
         /// <summary>
         /// 0 means no error
         /// </summary>
-        public int InfoID;
+        public int ID;
 
-        public string InfoText;
+        public int ProfileID;
+
+        public string Text;
 
         public InternetError()
         {
             this.ProfileID = -1;
-            this.InfoID = -1;
-            this.InfoText = string.Empty;
+            this.ID = -1;
+            this.Text = string.Empty;
         }
     }
 }

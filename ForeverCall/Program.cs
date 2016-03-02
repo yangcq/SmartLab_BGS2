@@ -13,14 +13,14 @@ namespace ForeverCall
 {
     class Program
     {
-        static CoreBGS2 bgs;
+        static BGS2Core bgs;
         static AutoResetEvent waitEvent;
 
         static void Main(string[] args)
         {
             waitEvent = new AutoResetEvent(false);
 
-            bgs = new CoreBGS2("COM3");
+            bgs = new BGS2Core("COM3");
 
             bgs.OnCurrentCallInfo += bgs_OnCurrentCallInfo;
 
@@ -31,7 +31,7 @@ namespace ForeverCall
 
             while (true) 
             {
-                bgs.Call("07857939269");
+                bgs.Call("07440455603");
                 waitEvent.WaitOne(30000);
                 bgs.Call_Hang_Up();
             }

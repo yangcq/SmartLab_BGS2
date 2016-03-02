@@ -13,10 +13,11 @@ namespace Test
 {
     class Program
     {
-        static CoreBGS2 m;
+        static BGS2Core m;
         static void Main(string[] args)
         {
-            m = new CoreBGS2("COM90");
+            m = new BGS2Core("COM3");
+            //m = new BGS2Core("COM11", 115200);
 
             m.OnNewSMSReceived += M_OnNewSMSReceived;
             m.OnNetworkRegistrationChanged += M_OnNetworkRegistrationChanged;
@@ -28,16 +29,75 @@ namespace Test
 
             m.Start();
 
+            //m.Internet_Setup_Connection_Profile_GPRS("giffgaff.com", "giffgaff", "password");
+            m.Internet_Setup_Connection_Profile_GPRS("data.lycamobile.co.uk", "lmuk", "plus");
             /*
-            InternetRequestResponse httpGetRe = m.Internet_HttpRequest_GET("http://sash.herts.ac.uk");
+            InternetRequestResponse httpGetRe = m.Internet_HttpRequest_GET("http://www.webservicex.net/globalweather.asmx");
             if (httpGetRe != null)
             {
-                System.Diagnostics.Debug.WriteLine(httpGetRe.Body);
+                if (httpGetRe.Error.InfoID == 0 && httpGetRe.Body.Length > 0)
+                    Console.WriteLine(httpGetRe.Body);
+                else
+                    Console.WriteLine("ERROR : " + httpGetRe.Error.InfoText + "!\r\n");
             }
-             * */
+*/
+            string reeeee = "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap12:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap12=\"http://www.w3.org/2003/05/soap-envelope\"><soap12:Body><GetCitiesByCountry xmlns=\"http://www.webserviceX.NET\"><CountryName>china</CountryName></GetCitiesByCountry></soap12:Body></soap12:Envelope>";
+           
+              
+
+          byte[] _dat = new byte[4123];
+          for (int i = 0; i < _dat.Length; i++)
+              _dat[i] = 0x60;
+          string longstring = UTF8Encoding.UTF8.GetString(_dat);
+
+
+
+            string requestbody = "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap12:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap12=\"http://www.w3.org/2003/05/soap-envelope\"><soap12:Body><GetHouse xmlns=\"http://speech.herts.ac.uk/ihs\"><houseID>1</houseID></GetHouse></soap12:Body></soap12:Envelope>";
+            
+
+            while (true)
+            {
+                //InternetRequestResponse smtpRe2 = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hellow CQ " + DateTime.Now.ToString());
+                InternetRequestResponse smtpRe22 = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.a.onuorah@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hellow CQ " + DateTime.Now.ToString());
+                if (smtpRe22!= null && smtpRe22.IsSuccess)
+                    Console.WriteLine("SMTP OK");
+                else
+                    Console.WriteLine("SMTP ERROR");
+
+                InternetRequestResponse r = m.Internet_HttpRequest_SOAP("http://speech.herts.ac.uk/ihs/ihs.asmx", requestbody);
+
+                if (r != null)
+                {
+                    if (r.Error.ID == 0 && r.Body.Length > 0)
+                         Console.WriteLine(r.Body);
+                        //Console.WriteLine("IHS OK");
+                    else
+                        Console.WriteLine("IHS ERROR : " + r.Error.Text + "!\r\n");
+                }
+
+                InternetRequestResponse httpPOSTRe = m.Internet_HttpRequest_POST("http://posttestserver.com/post.php", longstring);
+                if (httpPOSTRe != null)
+                {
+                    if (httpPOSTRe.Error.ID == 0 && httpPOSTRe.Body.Length > 0)
+                        Console.WriteLine(httpPOSTRe.Body);
+                        //Console.WriteLine("POST OK");
+                    else
+                        Console.WriteLine("POST ERROR : " + httpPOSTRe.Error.Text + "!\r\n");
+                }
+
+                InternetRequestResponse rE = m.Internet_HttpRequest_SOAP("http://www.webservicex.net/globalweather.asmx", reeeee);
+
+                if (rE != null)
+                {
+                    if (rE.Error.ID == 0 && rE.Body.Length > 0)
+                        Console.WriteLine(rE.Body);
+                    else
+                        Console.WriteLine("WEATHER ERROR : " + rE.Error.Text + "!\r\n");
+                }
+            }
 
             //while (true)
-                //m.SendATCommand("ATI");
+            //m.SendATCommand("ATI");
 
             //InternetRequestResponse popRe = m.Internet_POP_List_All("pop.163.com", "yangcq88517", "cq880517");
 
@@ -48,11 +108,11 @@ namespace Test
             for (int i = 0; i < _dat.Length; i++)
                 _dat[i] = 0x60;
             string longstring = UTF8Encoding.UTF8.GetString(_dat);
-
-            InternetRequestResponse smtpRe = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hello and welocome");
-            InternetRequestResponse smtpRe2 = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", longstring);
-            InternetRequestResponse smtpRe1 = m.Internet_SMTP("smtp.163.com", "aaaaaaaa@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hello and welocome");
             */
+            //InternetRequestResponse smtpRe = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hello and welocome");
+            //InternetRequestResponse smtpRe2 = m.Internet_SMTP("smtp.163.com", "yangcq88517@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", longstring);
+            //InternetRequestResponse smtpRe1 = m.Internet_SMTP("smtp.163.com", "aaaaaaaa@163.com", "c.yang21@herts.ac.uk", "yangcq88517", "cq880517", "BGS2-W", "Hello and welocome");
+            
 
             /*
             SMS[] smslist = m.SMS_List_Peek(SMSMessageStatus.all_messages);
@@ -64,18 +124,7 @@ namespace Test
             InternetServiceProfile kljdf = m.Internet_Read_Service_Profile(0);
             */
 
-            /*
-            byte[] _dat = new byte[4123];
-            for (int i = 0; i < _dat.Length; i++)
-                _dat[i] = 0x60;
-            string longstring = UTF8Encoding.UTF8.GetString(_dat);
-            
-            InternetRequestResponse httpPOSTRe = m.Internet_HttpRequest_POST("http://posttestserver.com/post.php", longstring);
-            if (httpPOSTRe != null)
-            {
-                System.Diagnostics.Debug.WriteLine(httpPOSTRe.Body);
-            }
-            */
+           
 
             System.Diagnostics.Debug.WriteLine(m.Call_Last_Duration);
             System.Diagnostics.Debug.WriteLine(m.Call_Total_Duration);
@@ -156,7 +205,7 @@ namespace Test
 
             m.SendATCommand("ATI");
 
-            GeneralResponse re = m.SendATCommand("AT^SMGL=ALL");
+            GeneralResponse re = m.SendATCommand("AT^SMGL=\"ALL\"");
             if (re != null)
                 for (int i = 0; i < re.PayLoad.Length; i += 2)
                     System.Diagnostics.Debug.WriteLine(re.PayLoad[i + 1]);

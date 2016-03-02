@@ -1,10 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO.Ports;
 using System.Text;
 using System.Threading;
 using SmartLab.BGS2.Status;
 using SmartLab.BGS2.Type;
+using System.Collections;
 
 namespace SmartLab.BGS2.Core
 {
@@ -45,7 +45,7 @@ namespace SmartLab.BGS2.Core
     /// <summary>
     /// ATE1 & ATV1 & AT+CMEE=0 are required.
     /// </summary>
-    public class CoreBGS2
+    public class BGS2Core
     {
         #region Event
         public event NewSMSHandler OnNewSMSReceived;
@@ -91,6 +91,7 @@ namespace SmartLab.BGS2.Core
         #endregion
 
         private SerialPort serialPort;
+        private byte[] serialByte = new byte[1];
 
         /// <summary>
         /// Global status to determine whether funtions can be called.
@@ -99,7 +100,7 @@ namespace SmartLab.BGS2.Core
 
         private BufferedArray buffer;
 
-        private List<string> data = new List<string>();
+        private ArrayList data = new ArrayList();
 
         private GeneralResponse response = new GeneralResponse();
 
@@ -112,7 +113,7 @@ namespace SmartLab.BGS2.Core
         /// <summary>
         /// Message queue from event, echo and unwanted response
         /// </summary>
-        private Queue<string> messageQueue = new Queue<string>();
+        private Queue messageQueue = new Queue();
         #endregion
 
         #region Echo Check Related
@@ -142,14 +143,18 @@ namespace SmartLab.BGS2.Core
         private AutoResetEvent echoCheckControl = new AutoResetEvent(false);
         #endregion
 
-        public CoreBGS2(SerialPort serial)
+        public BGS2Core(SerialPort serial)
         {
             this.serialPort = serial;
             buffer = new BufferedArray(1024);
         }
 
-        public CoreBGS2(string port)
+        public BGS2Core(string port)
             : this(new SerialPort(port, 230400))
+        { }
+
+        public BGS2Core(string port, int baudRate)
+            : this(new SerialPort(port, baudRate))
         { }
 
         public void Start()
@@ -177,7 +182,7 @@ namespace SmartLab.BGS2.Core
             new Thread(CommandEchoCheckThread).Start();
             new Thread(MessageProcessThread).Start();
             this.serialPort.DataReceived += serialPort_DataReceived;
-
+            
             SendATCommand("AT^SCKS=1");
             SendATCommand("AT+CREG=2");
             SendATCommand("AT+CMGF=1");
@@ -185,7 +190,6 @@ namespace SmartLab.BGS2.Core
             SendATCommand("AT^SMGO=1");
             SendATCommand("AT+CGREG=1");
             SendATCommand("AT^SM20=0");
-            SendATCommand("AT^SCFG=TCP/WITHURCS,OFF");
             SendATCommand("AT^SLCC=1");
             SendATCommand("AT+CUSD=1");
             SendATCommand("AT^SIND=BATTCHG,0");
@@ -200,9 +204,10 @@ namespace SmartLab.BGS2.Core
             SendATCommand("AT^SIND=EONS,1");
             SendATCommand("AT^SIND=NITZ,1");
             SendATCommand("AT^SIND=SIMTRAY,1");
-            SendATCommand("AT+CSCS=GSM");
+            SendATCommand("AT+CSCS=\"GSM\"");
             SendATCommand("AT+CMER=2,0,0,2");
             SendATCommand("AT+COPS=0");
+            SendATCommand("AT^SCFG=\"TCP/WITHURCS\",\"OFF\"");
         }
 
         #region Low Level Serial Data process
@@ -227,7 +232,8 @@ namespace SmartLab.BGS2.Core
         {
             lock (serialPort)
             {
-                serialPort.BaseStream.WriteByte(command);
+                serialByte[0] = command;
+                serialPort.Write(serialByte, 0, 1);
             }
         }
 
@@ -241,29 +247,32 @@ namespace SmartLab.BGS2.Core
             {
                 buffer.Rewind();
 
-                int _value = 0;
-
                 while (true)
                 {
-                    buffer.SetContent((byte)serialPort.ReadByte());
-
-                    _value = buffer.GetPosition();
-
-                    // only check when two char reaches
-                    if (_value < 2)
-                        continue;
-
-                    if (buffer.GetFrameData()[_value - 2] == 0x0D && buffer.GetFrameData()[_value - 1] == 0x0A)
+                    serialPort.Read(serialByte, 0, 1);
+                    if (serialByte[0] == 0x0D)
                     {
-                        if (_value == 2)
-                            return string.Empty;
+                        serialPort.Read(serialByte, 0, 1);
+                        if (serialByte[0] == 0x0A)
+                        {
+                            if (buffer.GetPosition() == 0)
+                                return string.Empty;
 
-                        return new string(UTF8Encoding.UTF8.GetChars(buffer.GetFrameData(), 0, _value - 2));
+                            byte[] tempArray = new byte[buffer.GetPosition()];
+                            System.Array.Copy(buffer.GetFrameData(), tempArray, tempArray.Length);
+
+                            return new string(UTF8Encoding.UTF8.GetChars(tempArray));
+                            //return new string(UTF8Encoding.UTF8.GetChars(buffer.GetFrameData(), 0, buffer.GetPosition()));
+                        }
+
+                        buffer.Rewind();
+                        continue;
                     }
+
+                    buffer.SetContent(serialByte[0]);
                 }
             }
         }
-
         #endregion
 
         /// <summary>
@@ -280,33 +289,50 @@ namespace SmartLab.BGS2.Core
                 {
                     while (true)
                     {
-                        buffer.SetContent((byte)serialPort.ReadByte());
+                        serialPort.Read(serialByte, 0, 1);
+                        buffer.SetContent(serialByte[0]);
+                        int position = buffer.GetPosition();
 
-                        if (buffer.GetFrameData()[buffer.GetPosition() - 1] == 0x0D)
+                        if (buffer.GetFrameData()[position - 1] == 0x0D)
                         {
-                            string _echo = new string(UTF8Encoding.UTF8.GetChars(buffer.GetFrameData(), 0, buffer.GetPosition() - 1));
+                            // this must be the 0x0D 0x0A as the begining
+                            if (position == 1)
+                            {
+                                serialPort.Read(serialByte, 0, 1);
+                                buffer.Rewind();
+                                continue;
+                            }
 
-                            if (_echo.Contains(echoString))
+                            byte[] tempArray = new byte[buffer.GetPosition() - 1];
+                            System.Array.Copy(buffer.GetFrameData(), tempArray, tempArray.Length);
+
+                            string _echo = new string(UTF8Encoding.UTF8.GetChars(tempArray));
+                            //string _echo = new string(UTF8Encoding.UTF8.GetChars(buffer.GetFrameData(), 0, position - 1));
+
+                            if (_echo == null)
+                            {
+                                buffer.Rewind();
+                                continue;
+                            }
+
+                            if (_echo.IndexOf(echoString) >= 0)
                             {
                                 isEchoOK = true;
                                 break;
                             }
                             else
                             {
-                                // read one more 0D 0A
-                                buffer.SetContent((byte)serialPort.ReadByte());
-                                int _p = buffer.GetPosition();
-                                if (_p > 2)
+                                // read one more 0x0D 0x0A
+                                serialPort.Read(serialByte, 0, 1);
+                                if (serialByte[0] == 0x0A)
                                 {
-                                    // envent string insted of AT response
-                                    if (buffer.GetFrameData()[_p - 2] == 0x0D && buffer.GetFrameData()[_p - 1] == 0x0A)
+                                    lock (messageQueue)
                                     {
-                                        lock (messageQueue)
-                                        {
-                                            messageQueue.Enqueue(new string(UTF8Encoding.UTF8.GetChars(buffer.GetFrameData(), 0, _p - 2)));
-                                        }
+                                        messageQueue.Enqueue(_echo);
                                     }
+                                    messageWait.Set();
                                 }
+
                                 buffer.Rewind();
                             }
                         }
@@ -314,7 +340,6 @@ namespace SmartLab.BGS2.Core
                     //while (serialPort.BytesToRead > 0) ;
                 }
 
-                messageWait.Set();
                 echoCheckWait.Set();
             }
         }
@@ -331,12 +356,11 @@ namespace SmartLab.BGS2.Core
             if (!isRunning)
                 return null;
 
+            response.Reset();
+
             // check if "AT" is included
             if (command.ToUpper().IndexOf("AT") < 0)
-            {
-                response.Reset();
                 return response;
-            }
 
             // remove the event
             this.serialPort.DataReceived -= serialPort_DataReceived;
@@ -354,7 +378,7 @@ namespace SmartLab.BGS2.Core
             echoCheckControl.Set();
             // block for MAX 10 * 1000 ms for the echo to finish.
             //echoCheckWait.WaitOne();
-            echoCheckWait.WaitOne(10000);
+            echoCheckWait.WaitOne(10000, false);
 
             if (!isEchoOK)
             {
@@ -368,7 +392,12 @@ namespace SmartLab.BGS2.Core
                 Write(addtionalData1);
                 Write(0x1A);
 
-                while (serialPort.ReadByte() != 0x1A) ;
+                while (true)
+                {
+                    serialPort.Read(serialByte, 0, 1);
+                    if (serialByte[0] == 0x1A)
+                        break;
+                }
             }
 
             // try read one line from the serial port, because payload always start with \r\n so it is alway be ""
@@ -382,6 +411,7 @@ namespace SmartLab.BGS2.Core
             data.Clear();
 
             // setep 1: keep reading without ending check.
+            // at least read one line, so this will work with the write data
             do
             {
                 data.Add(ReadLine());
@@ -401,7 +431,7 @@ namespace SmartLab.BGS2.Core
             {
                 for (endindex = data.Count - 1; endindex >= searchend; endindex--)
                 {
-                    switch (data[endindex])
+                    switch (data[endindex].ToString())
                     {
                         case "OK": // 0 command executed, no errors
                         case "CONNECT": //  1 link established
@@ -440,7 +470,7 @@ namespace SmartLab.BGS2.Core
                     // remove them from the payload
                     while (endindex < data.Count - 1)
                     {
-                        string unwanted = data[endindex + 1];
+                        string unwanted = data[endindex + 1].ToString();
                         data.RemoveAt(endindex + 1);
                         if (unwanted.Length == 0)
                             continue;
@@ -453,9 +483,9 @@ namespace SmartLab.BGS2.Core
                     break;
                 }
             }
-            while (serialPort.BytesToRead > 0);
+            while (true);
 
-            switch (data[data.Count - 1])
+            switch (data[data.Count - 1].ToString())
             {
                 case "OK": // 0 command executed, no errors
                     // remove a blank line just before the status if there is one
@@ -479,6 +509,9 @@ namespace SmartLab.BGS2.Core
                 case "DIALING": //  mobile phone
                     response.IsSuccess = false;
                     data.RemoveAt(data.Count - 1);
+                    break;
+                default:
+                    response.IsSuccess = false;
                     break;
             }
             // Step 3: process
@@ -564,15 +597,13 @@ namespace SmartLab.BGS2.Core
             */
 
             // add payload to the response
-            response.PayLoad = data.ToArray();
+            response.PayLoad = (string[])data.ToArray(typeof(string));
 
             /*
             If an AT command is finished (with "OK" or "ERROR") the TE shall always wait at least 100 ms before sending
             the next one. This applies to bit rates of 9600 bps or higher (see AT+IPR).
             */
             Thread.Sleep(100);
-
-            messageWait.Set();
 
             // add the event back
             this.serialPort.DataReceived += serialPort_DataReceived;
@@ -608,8 +639,12 @@ namespace SmartLab.BGS2.Core
                 {
                     while (messageQueue.Count > 0)
                     {
-                        string message = messageQueue.Dequeue();
-                        System.Diagnostics.Debug.WriteLine(message);
+                        string message = messageQueue.Dequeue().ToString();
+
+                        if (message == null)
+                            continue;
+
+                        //System.Diagnostics.Debug.WriteLine(message);
                         int start = message.IndexOf(": ");
                         if (start > 0)
                         {
@@ -841,7 +876,7 @@ namespace SmartLab.BGS2.Core
                     {
                         string[] values = re.PayLoad[0].Split(',');
 
-                        if (values.Length == 4)
+                        if (values.Length >= 4)
                             return (NetworkRegistrationStatus)(int.Parse(values[1]));
                     }
                 }
@@ -987,7 +1022,7 @@ namespace SmartLab.BGS2.Core
                     string[] temp = re.PayLoad[i].Split(',');
                     list[i] = new CallInfo();
 
-                    if (!temp[0].Contains("+CLCC"))
+                    if (temp[0].IndexOf("+CLCC") < 0)
                         continue;
 
                     list[i].CallIndex = int.Parse(temp[0].Split(' ')[1]);
@@ -1017,7 +1052,7 @@ namespace SmartLab.BGS2.Core
                 if (re.IsSuccess && re.PayLoad.Length == 1)
                 {
                     string[] values = re.PayLoad[0].Split(' ');
-                    if (values[0].Contains("^SLCD"))
+                    if (values[0].IndexOf("^SLCD") >= 0)
                         return values[1];
                 }
 
@@ -1033,7 +1068,7 @@ namespace SmartLab.BGS2.Core
                 if (re.IsSuccess && re.PayLoad.Length == 1)
                 {
                     string[] values = re.PayLoad[0].Split(' ');
-                    if (values[0].Contains("^STCD"))
+                    if (values[0].IndexOf("^STCD") >= 0)
                         return values[1];
                 }
 
@@ -1076,14 +1111,14 @@ namespace SmartLab.BGS2.Core
                     entries[i] = new PhoneBook();
                     string[] values = re.PayLoad[i].Split(',');
 
-                    if (values[0].Contains("^SPBG"))
+                    if (values[0].IndexOf("^SPBG") >=0 )
                     {
                         entries[i].Number = values[1].Split('"')[1];
                         entries[i].NumberType = (CallNumberType)int.Parse(values[2]);
                         entries[i].Name = values[3].Split('"')[1];
                         entries[i].LocationID = values[4];
                     }
-                    else if (values[0].Contains("+CPBR"))
+                    else if (values[0].IndexOf("+CPBR") >= 0)
                     {
                         entries[i].Number = values[1].Split('"')[1];
                         entries[i].NumberType = (CallNumberType)int.Parse(values[2]);
@@ -1177,7 +1212,7 @@ namespace SmartLab.BGS2.Core
                 {
                     PhoneBookStorageDetail detail = new PhoneBookStorageDetail();
                     string[] values = re.PayLoad[0].Split(new char[] { ',', ' ' });
-                    if (values.Length == 4 && values[0].Contains("+CPBS"))
+                    if (values.Length == 4 && values[0].IndexOf("+CPBS") >= 0)
                     {
                         detail.Storage = PhoneBook.GetPhoneBookStorageType(values[1]);
                         detail.Used = int.Parse(values[2]);
@@ -1293,7 +1328,7 @@ namespace SmartLab.BGS2.Core
                     string[] values = re.PayLoad[0].Split('"');
                     if (values.Length == 3)
                     {
-                        if (values[0].Contains("+CSCA"))
+                        if (values[0].IndexOf("+CSCA") >= 0)
                             return values[1];
                     }
                 }
@@ -1318,7 +1353,7 @@ namespace SmartLab.BGS2.Core
                 if (re.IsSuccess && re.PayLoad.Length == 1)
                 {
                     string[] values = re.PayLoad[0].Split(' ');
-                    if (values.Length == 2 && values[1].Contains("^SSMSS"))
+                    if (values.Length == 2 && values[1].IndexOf("^SSMSS") >= 0)
                         return (SMSStorageSequence)int.Parse(values[1]);
                 }
 
@@ -1340,7 +1375,7 @@ namespace SmartLab.BGS2.Core
                 if (re.IsSuccess && re.PayLoad.Length == 1)
                 {
                     string[] values = re.PayLoad[0].Split(new char[2] { ',', ' ' });
-                    if (values.Length == 10 && values[0].Contains("+CPMS"))
+                    if (values.Length == 10 && values[0].IndexOf("+CPMS") >= 0)
                     {
                         storage.Listing_Reading_Deleting.Storage = SMSStorageDetail.GetSMSStorageType(values[1]);
                         storage.Listing_Reading_Deleting.Used = values[2];
@@ -1377,7 +1412,7 @@ namespace SmartLab.BGS2.Core
                         details[i] = new SMSStorageDetail();
                         string[] values = re.PayLoad[i].Split(new char[2] { ',', ' ' });
 
-                        if (!values[0].Contains("^SLMS"))
+                        if (values[0].IndexOf("^SLMS") < 0)
                             continue;
 
                         details[i].Storage = SMSStorageDetail.GetSMSStorageType(values[1]);
@@ -1407,7 +1442,7 @@ namespace SmartLab.BGS2.Core
                     list[index] = new SMS();
                     string[] values = re.PayLoad[i].Split(',');
 
-                    if (!values[0].Contains(command))
+                    if (values[0].IndexOf(command) < 0)
                         continue;
 
                     list[index].MessageID = values[0].Split(' ')[1];
@@ -1437,7 +1472,7 @@ namespace SmartLab.BGS2.Core
             if (re.IsSuccess && re.PayLoad.Length == 2)
             {
                 string[] values = re.PayLoad[0].Split(',');
-                if (values[0].Contains(command))
+                if (values[0].IndexOf(command) >= 0)
                 {
                     SMS message = new SMS();
                     message.Status = SMS.GetSMSStatusType(values[0].Split(' ')[1]);
@@ -1552,7 +1587,7 @@ namespace SmartLab.BGS2.Core
             if (re.IsSuccess && re.PayLoad.Length == 1)
             {
                 string[] values = re.PayLoad[0].Split(' ');
-                if (values[0].Contains("+CMGW"))
+                if (values[0].IndexOf("+CMGW") >= 0)
                     return int.Parse(values[1]);
             }
 
@@ -1574,7 +1609,7 @@ namespace SmartLab.BGS2.Core
                 {
                     string[] values = re.PayLoad[0].Split(',');
 
-                    if (values[0].Contains("^SMGO"))
+                    if (values[0].IndexOf("^SMGO") >= 0)
                         return (SMSOverflowStatus)int.Parse(values[1].Split(',')[1]);
                 }
 
@@ -1644,10 +1679,10 @@ namespace SmartLab.BGS2.Core
                 for (int i = 0; i < re.PayLoad.Length; i++)
                 {
                     string[] values = re.PayLoad[i].Split(',');
-                    if (!values[0].Contains("^SICS"))
+                    if (values[0].IndexOf("^SICS") < 0)
                         continue;
 
-                    if (values[0].Split(' ')[1].Equals(ProfileID))
+                    if (values[0].Split(' ')[1].Equals(ProfileID.ToString()))
                     {
                         switch (values[1])
                         {
@@ -1744,10 +1779,10 @@ namespace SmartLab.BGS2.Core
                 for (int i = 0; i < re.PayLoad.Length; i++)
                 {
                     string[] values = re.PayLoad[i].Split(',');
-                    if (!values[0].Contains("^SISS"))
+                    if (values[0].IndexOf("^SISS") < 0)
                         continue;
 
-                    if (values[0].Split(' ')[1].Equals(ProfileID))
+                    if (values[0].Split(' ')[1].Equals(ProfileID.ToString()))
                     {
                         switch (values[1])
                         {
@@ -1803,7 +1838,7 @@ namespace SmartLab.BGS2.Core
                     string[] values = re.PayLoad[i].Split(',');
                     info[i] = new InternetConnectionInfo();
 
-                    if (!values[0].Contains("^SICI"))
+                    if (values[0].IndexOf("^SICI") < 0)
                         continue;
 
                     info[i].ProfileID = int.Parse(values[0].Split(' ')[1]);
@@ -1824,7 +1859,7 @@ namespace SmartLab.BGS2.Core
             {
                 string[] values = re.PayLoad[0].Split(',');
 
-                if (values[0].Contains("^SICI"))
+                if (values[0].IndexOf("^SICI") >= 0)
                 {
                     InternetConnectionInfo info = new InternetConnectionInfo();
                     info.ProfileID = ProfileID;
@@ -1849,7 +1884,7 @@ namespace SmartLab.BGS2.Core
                     string[] values = re.PayLoad[i].Split(',');
                     info[i] = new InternetServiceInfo();
 
-                    if (values[0].Contains("^SISI"))
+                    if (values[0].IndexOf("^SISI") >= 0)
                     {
                         info[i].ProfileID = int.Parse(values[0].Split(' ')[1]);
                         info[i].Status = (InternetServiceStatus)int.Parse(values[1]);
@@ -1876,7 +1911,7 @@ namespace SmartLab.BGS2.Core
             if (re.IsSuccess)
             {
                 string[] values = re.PayLoad[0].Split(',');
-                if (values[0].Contains("^SISI"))
+                if (values[0].IndexOf("^SISI") >= 0)
                 {
                     InternetServiceInfo info = new InternetServiceInfo();
                     info.ProfileID = ProfileID;
@@ -1902,11 +1937,11 @@ namespace SmartLab.BGS2.Core
             if (re.IsSuccess)
             {
                 string[] values = re.PayLoad[0].Split(',');
-                if (values[0].Contains("^SISE"))
+                if (values[0].IndexOf("^SISE") >= 0)
                 {
                     InternetError error = new InternetError();
                     error.ProfileID = ProfileID;
-                    error.InfoID = int.Parse(values[1]);
+                    error.ID = int.Parse(values[1]);
                     if (values.Length == 3)
                         error.InfoText = values[2];
                     return error;
@@ -1960,14 +1995,14 @@ namespace SmartLab.BGS2.Core
 
         public InternetReadResponse Internet_Service_Read_Date(int ProfileID)
         {
-            StringBuilder sb = new StringBuilder();
+            string sb = string.Empty;
             InternetReadResponse dataResponse = new InternetReadResponse();
 
             GeneralResponse re = SendATCommand("AT^SISR=" + ProfileID + ",1500");
             if (re.IsSuccess & re.PayLoad.Length > 0)
             {
                 string[] values = re.PayLoad[0].Split(',');
-                if (values[0].Contains("^SISR"))
+                if (values[0].IndexOf("^SISR") >= 0)
                 {
                     int length = int.Parse(values[1]);
                     if (length > 0 && re.PayLoad.Length > 1)
@@ -1975,9 +2010,9 @@ namespace SmartLab.BGS2.Core
                         dataResponse.Status = InternetReadStatus.data_is_available;
                         for (int i = 1; i < re.PayLoad.Length; i++)
                         {
-                            sb.Append(re.PayLoad[i]);
+                            sb += re.PayLoad[i];
                             if (i < re.PayLoad.Length - 1)
-                                sb.Append("\r\n");
+                                sb += "\r\n";
                         }
                         dataResponse.Data = sb.ToString();
                     }
@@ -1985,20 +2020,22 @@ namespace SmartLab.BGS2.Core
                         dataResponse.Status = (InternetReadStatus)length;
                 }
             }
+            else dataResponse.Status = InternetReadStatus.data_transfer_has_been_finished;
+
             return dataResponse;
         }
-
+        
         public int Internet_Service_Write_Date(int ProfileID, string Data)
         {
             GeneralResponse re = SendATCommand("AT^SISW=" + ProfileID + "," + Data.Length, null, Data);
             if (re.IsSuccess && re.PayLoad.Length > 0)
             {
                 string[] values = re.PayLoad[0].Split(',');
-                if (values[0].Contains("^SISW"))
+                if (values[0].IndexOf("^SISW") >= 0)
                     return int.Parse(values[1]);
             }
 
-            return -1;
+            return 0;
         }
 
         public int Internet_Service_Write_Date(InternetServiceProfile Profile, string Data)
@@ -2008,12 +2045,14 @@ namespace SmartLab.BGS2.Core
 
         #endregion
 
-        private InternetRequestResponse Internet_Data_Request(int ServiceID, int ConnectionID, string data = null)
+        private InternetRequestResponse Internet_Data_Request(int ServiceID, int ConnectionID, string data = null, bool isSMTP = false)
         {
             InternetRequestResponse response = new InternetRequestResponse();
+            bool needBreak = false;
 
             if (Internet_Open_Service(ServiceID))
             {
+                /*
                 // service no error, check if the conntion is up, then start receive data
                 InternetConnectionInfo info = Internet_Connection_Information(ConnectionID);
                 if (info == null || info.Status != InternetConnectionStatus.up_internet_connection_is_established_and_usable)
@@ -2022,29 +2061,52 @@ namespace SmartLab.BGS2.Core
                     Internet_Close_Service(ServiceID);
                     return response;
                 }
-
+                */
                 bool isOK = false;
+                needBreak = false;
 
                 do
                 {
                     response.Info = Internet_Service_Information(ServiceID);
                     response.Error = Internet_Service_Error(ServiceID);
 
-                    if (response.Info.Status == InternetServiceStatus.up)
+                    switch (response.Info.Status)
                     {
-                        isOK = true;
-                        break;
+                        case InternetServiceStatus.allocated:
+                            break;
+                        case InternetServiceStatus.closing:
+                        case InternetServiceStatus.down:
+                        case InternetServiceStatus.unkonwn:
+                            isOK = false;
+                            needBreak = true;
+                            break;
+                        case InternetServiceStatus.up:
+                            isOK = true;
+                            needBreak = true;
+                            break;
+                        case InternetServiceStatus.connecting:
+                            // smtp only
+                            if (isSMTP)
+                            {
+                                isOK = true;
+                                needBreak = true;
+                            }
+                            break;
                     }
-                    else if (response.Info.Status == InternetServiceStatus.down)
+
+                    if (needBreak)
                         break;
 
-                    if (response.Error.InfoID != 0)
+                    if (response.Error.ID != 0)
                         break;
                 }
                 while (true);
 
                 if (!isOK)
+                {
+                    Internet_Close_Service(ServiceID);
                     return response;
+                }
 
                 // write
                 if (data != null)
@@ -2052,6 +2114,7 @@ namespace SmartLab.BGS2.Core
                     isOK = true;
                     int bytesToWrite = data.Length;
                     int startIndex = 0;
+                    needBreak = false;
                     while (true)
                     {
                         // max write size is 1500 and get the actual size that server accpet
@@ -2061,42 +2124,98 @@ namespace SmartLab.BGS2.Core
                         bytesToWrite -= size;
                         startIndex += size;
 
-                        if (bytesToWrite <= 0)
-                            break;
-
                         response.Error = Internet_Service_Error(ServiceID);
                         response.Info = Internet_Service_Information(ServiceID);
 
-                        if (response.Info.Status != InternetServiceStatus.up)
+                        if (bytesToWrite <= 0)
+                            break;
+
+                        if (response.Error.ID != 0)
                         {
                             isOK = false;
                             break;
                         }
 
-                        if (response.Error.InfoID != 0)
+                        switch (response.Info.Status)
                         {
-                            isOK = false;
-                            break;
+                            case InternetServiceStatus.allocated:
+                            case InternetServiceStatus.closing:
+                            case InternetServiceStatus.down:
+                            case InternetServiceStatus.unkonwn:
+                                isOK = false;
+                                needBreak = true;
+                                break;
+                            case InternetServiceStatus.up:
+                                // no action is reatuired
+                                break;
+                            case InternetServiceStatus.connecting:
+                                // smtp is ok, but other is not ok
+                                if (!isSMTP)
+                                {
+                                    isOK = false;
+                                    needBreak = true;
+                                }
+                                break;
                         }
+
+                        if (needBreak)
+                            break;
                     }
 
                     if (!isOK)
+                    {
+                        Internet_Close_Service(ServiceID);
                         return response;
+                    }
+
+                    if (isSMTP)
+                        SendATCommand("AT^SISW=" + ServiceID + ",0,1");
                 }
 
                 // read
-                StringBuilder sb = new StringBuilder();
+                int numberDown = 0;
+                string sb = string.Empty;
+                needBreak = false;
+                int loopCount = 0;
                 while (true)
                 {
-                    InternetReadResponse inData = Internet_Service_Read_Date(ServiceID);
-                    if (inData.Status == InternetReadStatus.data_is_available)
-                        sb.Append(inData.Data);
-                    else if (inData.Status == InternetReadStatus.data_transfer_has_been_finished)
+                    response.Error = Internet_Service_Error(ServiceID);
+                    response.Info = Internet_Service_Information(ServiceID);
+
+                    if (response.Error.ID != 0)
                         break;
 
-                    response.Error = Internet_Service_Error(ServiceID);
+                    switch (response.Info.Status)
+                    {
+                        case InternetServiceStatus.down:
+                            if (isSMTP)
+                                numberDown = 4;
+                            else
+                                numberDown++;
+                            break;
+                        case InternetServiceStatus.closing:
+                        case InternetServiceStatus.allocated:
+                        case InternetServiceStatus.unkonwn:
+                        case InternetServiceStatus.connecting:
+                            break;
+                        case InternetServiceStatus.up:
+                            loopCount++;
+                            break;
+                    }
 
-                    if (response.Error.InfoID != 0)
+                    if (numberDown > 3)
+                        break;
+
+                    if (isSMTP)
+                        continue;
+                    
+                    InternetReadResponse inData = Internet_Service_Read_Date(ServiceID);
+                    if (inData.Status == InternetReadStatus.data_is_available)
+                        sb += inData.Data;
+                    else if (inData.Status == InternetReadStatus.data_transfer_has_been_finished)
+                        break;
+                    
+                    if (loopCount > 30)
                         break;
                 }
 
@@ -2131,6 +2250,7 @@ namespace SmartLab.BGS2.Core
         {
             InternetServiceProfile service = new InternetServiceProfile(0, InternetServiceType.Http, 0);
             service.address = URL;
+            service.hcContLen = "0";
             service.hcMethod = InternetServiceMethod.GET;
             Internet_Setup_Service_Profile(service);
             return Internet_HttpRequest_GET(service);
@@ -2186,13 +2306,14 @@ namespace SmartLab.BGS2.Core
         /// <param name="Host"></param>
         /// <param name="Data"></param>
         /// <returns></returns>
-        public InternetRequestResponse Internet_HttpRequest_SOAP(string RequestURL, string Host, string XML)
+        public InternetRequestResponse Internet_HttpRequest_SOAP(string RequestURL, string XML)
         {
             InternetServiceProfile service = new InternetServiceProfile(1, InternetServiceType.Http, 0);
             service.hcMethod = InternetServiceMethod.POST;
             service.address = RequestURL;
             service.hcContLen = XML.Length.ToString();
-            service.hcProp = "Host:\\20" + Host + "\\0d\\0aContent-Type:\\20application/soap+xml\\3b\\20charset=utf-8\\0d\\0aContent-Length:\\20" + XML.Length.ToString();
+            //service.hcProp = "Host:\\20" + Host + "\\0d\\0aContent-Type:\\20application/soap+xml\\3b\\20charset=utf-8\\0d\\0aContent-Length:\\20" + XML.Length.ToString();
+            service.hcProp = "Content-Type:\\20application/soap+xml\\3b\\20charset=utf-8";
             Internet_Setup_Service_Profile(service);
             return Internet_HttpRequest_POST(service.profileID, service.conId, XML);
         }
@@ -2202,6 +2323,8 @@ namespace SmartLab.BGS2.Core
 
         public InternetRequestResponse Internet_SMTP(int ServiceID, int ConnectionID, string Message)
         {
+            return Internet_Data_Request(ServiceID, ConnectionID, Message, true);
+            /*
             InternetRequestResponse response = new InternetRequestResponse();
 
             if (Internet_Open_Service(ServiceID))
@@ -2297,6 +2420,7 @@ namespace SmartLab.BGS2.Core
 
             Internet_Close_Service(ServiceID);
             return null;
+            */
         }
 
         public InternetRequestResponse Internet_SMTP(InternetServiceProfile Profile, string Message)
